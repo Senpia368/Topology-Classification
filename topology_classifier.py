@@ -79,11 +79,6 @@ class PersistentHomologyFeatures:
         for dim in range(self.max_dimension + 1):
             # Get persistence pairs for this dimension
             pairs = [(birth, death) for (d, (birth, death)) in persistence if d == dim and death != float('inf')]
-
-            # for birth, death in pairs:
-            #     if not np.isfinite(birth) or not np.isfinite(death):
-            #         print("Non-finite birth/death detected!")
-            # print(pairs)
                         
             if len(pairs) > 0:
                 pairs = np.array(pairs)
@@ -109,45 +104,30 @@ class TopologyClassifier:
         self.classifier = RandomForestClassifier(n_estimators=200, criterion='entropy')
         self.n_jobs = n_jobs
 
-    # def _process_single_point_cloud(self, pc):
-    #     """Helper function to process a single point cloud and extract its features."""
-    #     # Process point cloud
-    #     processed_pc = self.processor.process(pc)
+    def _process_single_point_cloud(self, pc):
+        """Helper function to process a single point cloud and extract its features."""
+        # Process point cloud
+        processed_pc = self.processor.process(pc)
 
-    #     # Compute persistence
-    #     persistence = self.feature_extractor.compute_persistence(processed_pc)
+        # Compute persistence
+        persistence = self.feature_extractor.compute_persistence(processed_pc)
 
-    #     # Extract features from persistence
-    #     pc_features = self.feature_extractor.extract_features(persistence)
-    #     return pc_features
+        # Extract features from persistence
+        pc_features = self.feature_extractor.extract_features(persistence)
+        return pc_features
 
-    # def extract_features(self, point_clouds):
-    #     """Extract features from a list of point clouds using parallel processing."""
-    #     # Parallelize over the list of point clouds
-    #     features = Parallel(n_jobs=self.n_jobs, backend='multiprocessing')(
-    #         delayed(self._process_single_point_cloud)(pc)
-    #         for pc in point_clouds
-    #     )
-        
-    #     print("Successfully extracted features")
-    #     return np.array(features)
-        
     def extract_features(self, point_clouds):
-        """Extract features from a list of point clouds."""
-        features = []
-        for pc in point_clouds:
-            # Process point cloud
-            processed_pc = self.processor.process(pc)
-            
-            # Compute persistence
-            persistence = self.feature_extractor.compute_persistence(processed_pc)
-            
-            # Extract features from persistence
-            pc_features = self.feature_extractor.extract_features(persistence)
-            features.append(pc_features)
+        """Extract features from a list of point clouds using parallel processing."""
+        # Parallelize over the list of point clouds
+        with Parallel(n_jobs=self.n_jobs) as parallel:
+        # Perform your parallel calls
+            features = parallel(
+                delayed(self._process_single_point_cloud)(pc)
+                for pc in point_clouds
+            )
+            parallel._terminate_and_reset()
         
         print("Successfully extracted features")
-            
         return np.array(features)
     
     def fit(self, point_clouds, labels):
@@ -180,25 +160,47 @@ class TopologyNet(nn.Module):
             nn.Dropout(0.3),
             nn.Linear(64, num_classes)
         )
-    
+
     def forward(self, x):
         return self.network(x)
 
 class PointCloudDataset(Dataset):
-    def __init__(self, point_clouds, labels, processor=None, feature_extractor=None):
+    def __init__(self, point_clouds, labels, processor=None, feature_extractor=None, n_jobs=-1):
         self.processor = processor or PointCloudProcessor()
         self.feature_extractor = feature_extractor or PersistentHomologyFeatures()
+        self.n_jobs = n_jobs
         
         # Pre-compute features
-        self.features = []
-        for pc in point_clouds:
-            processed_pc = self.processor.process(pc)
-            persistence = self.feature_extractor.compute_persistence(processed_pc)
-            features = self.feature_extractor.extract_features(persistence)
-            self.features.append(features)
+        self.features = self.extract_features(point_clouds)
             
-        self.features = torch.FloatTensor(self.features)
-        self.labels = torch.LongTensor(labels)
+        self.features = torch.FloatTensor(self.features).to("cuda:0")
+        self.labels = torch.LongTensor(labels).to("cuda:0")
+    
+    def _process_single_point_cloud(self, pc):
+        """Helper function to process a single point cloud and extract its features."""
+        # Process point cloud
+        processed_pc = self.processor.process(pc)
+
+        # Compute persistence
+        persistence = self.feature_extractor.compute_persistence(processed_pc)
+
+        # Extract features from persistence
+        pc_features = self.feature_extractor.extract_features(persistence)
+        return pc_features
+
+    def extract_features(self, point_clouds):
+        """Extract features from a list of point clouds using parallel processing."""
+        # Parallelize over the list of point clouds
+        with Parallel(n_jobs=self.n_jobs) as parallel:
+        # Perform your parallel calls
+            features = parallel(
+                delayed(self._process_single_point_cloud)(pc)
+                for pc in point_clouds
+            )
+            parallel._terminate_and_reset()
+        
+        print("Successfully extracted features")
+        return np.array(features)
     
     def __len__(self):
         return len(self.labels)
@@ -230,28 +232,80 @@ def main():
     X_train, X_test, y_train, y_test = train_test_split(
         points, labels, test_size=0.2, random_state=42
     )
+
+    num_classes = len(np.unique(labels))
     # Train classical classifier
     # classifier = TopologyClassifier()
-    classifier = TopologyClassifier(processor=PointCloudProcessor(num_points=100), n_jobs=-1)
-    print("Training classifier...")
-    classifier.fit(X_train, y_train)
+    # classifier = TopologyClassifier(processor=PointCloudProcessor(num_points=256), n_jobs=-1)
+    # print("Training classifier...")
+    # classifier.fit(X_train, y_train)
     
-    # Predict
-    print("Predicting...")
-    predictions = classifier.predict(X_test)
-    y_hat = np.array(predictions)
-    accuracy = accuracy_score(y_test, y_hat)
-    cm = confusion_matrix(y_test, y_hat)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Pedestrian', 'Car', 'Bicycle', 'Truck', 'Motorcycle', 'Wheelchair', 'ScooterRider', 'Bus'])
+    # # Predict
+    # print("Predicting...")
+    # predictions = classifier.predict(X_test)
+    # y_hat = np.array(predictions)
+    # accuracy = accuracy_score(y_test, y_hat)
+    # cm = confusion_matrix(y_test, y_hat)
+    # disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Pedestrian', 'Car', 'Bicycle', 'Truck', 'Motorcycle', 'Wheelchair', 'ScooterRider', 'Bus'])
 
-    disp.plot()  # This plots the confusion matrix
+    # disp.plot()  # This plots the confusion matrix
 
-    # Save the figure
-    plt.savefig("my_confusion_matrix.png", dpi=600, bbox_inches='tight')
+    # # Save the figure
+    # plt.savefig("my_confusion_matrix.png", dpi=600, bbox_inches='tight')
 
-    # Optionally close the figure if you don't want it displayed:
-    plt.close()
-    print(f"Accuracy: {accuracy}")
+    # # Optionally close the figure if you don't want it displayed:
+    # plt.close()
+    # print(f"Accuracy: {accuracy}")
+
+    # Train deep learning model
+    # Create datasets
+    train_dataset = PointCloudDataset(X_train, y_train, processor=PointCloudProcessor(num_points=100))
+    test_dataset = PointCloudDataset(X_test, y_test, processor=PointCloudProcessor(num_points=100))
+    print("Successfully created datasets")
+    
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=32)
+    print("Successfully created data loaders")
+    
+    # Initialize model
+    input_dim = train_dataset.features.shape[1]
+    model = TopologyNet(input_dim=input_dim, num_classes=num_classes).to("cuda:0")
+    print("Successfully initialized model")
+    
+    # Training loop (simplified)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    
+    num_epochs = 250
+    for epoch in range(num_epochs):
+        model.train()
+        epoch_loss = 0
+        for batch, (features, labels) in enumerate(train_loader):
+            optimizer.zero_grad()
+            outputs = model(features)
+            loss = criterion(outputs, labels)
+            loss.backward()
+            optimizer.step()
+            epoch_loss += loss.item()
+        print(f"Epoch {epoch+1}, loss: {epoch_loss / len(train_loader)}")
+
+    # Evaluation
+    model.eval()
+    correct = 0
+    total = 0
+    with torch.no_grad():
+        for features, labels in test_loader:
+            outputs = model(features)
+            _, predicted = torch.max(outputs.data, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+
+    print(f"Accuracy: {correct / total}")
+
+    # Save model
+    torch.save(model.state_dict(), "model2.pth")
+    
     
 
     
