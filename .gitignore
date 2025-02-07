@@ -172,3 +172,8 @@ cython_debug/
 cropped*/
 nuscenes*/
 Lidar*/
+merged*
+*.png
+sampled_objects/
+*.zip
+*.pkl
