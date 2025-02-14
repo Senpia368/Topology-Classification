@@ -211,8 +211,10 @@ class PointCloudDataset(Dataset):
 
 # Example usage
 def main():
-    dataset_path = 'merged_sampled_objects'
-    data = PointCloudDataLoader(dataset_path).data
+    # dataset_path = 'merged_sampled_objects'
+    dataset_path = 'sampled_objects2'
+    objects_ids_dict = {k:v for v, k in enumerate(sorted(os.listdir(dataset_path)))}
+    data = PointCloudDataLoader(dataset_path, objects_ids_dict=objects_ids_dict, use_cache=False).data
     points = []
     labels = []
 
@@ -271,6 +273,7 @@ def main():
     # Initialize model
     input_dim = train_dataset.features.shape[1]
     model = TopologyNet(input_dim=input_dim, num_classes=num_classes).to("cuda:0")
+    # model.load_state_dict(torch.load("model2.pth"))
     print("Successfully initialized model")
     
     # Training loop (simplified)
@@ -292,19 +295,44 @@ def main():
 
     # Evaluation
     model.eval()
-    correct = 0
-    total = 0
-    with torch.no_grad():
-        for features, labels in test_loader:
-            outputs = model(features)
-            _, predicted = torch.max(outputs.data, 1)
-            total += labels.size(0)
-            correct += (predicted == labels).sum().item()
+    y_preds = []
+    y_true = []
 
-    print(f"Accuracy: {correct / total}")
+    with torch.no_grad():
+        for features, lbls in test_loader:
+            features = features.to("cuda:0")
+            lbls = lbls.to("cuda:0")
+            outputs = model(features)
+            _, predicted = torch.max(outputs, 1)
+            
+            y_preds.extend(predicted.cpu().numpy())
+            y_true.extend(lbls.cpu().numpy())
+
+    # Calculate accuracy
+    accuracy = accuracy_score(y_true, y_preds)
+    print(f"Accuracy: {accuracy:.4f}")
+
+    # Confusion matrix
+    cm = confusion_matrix(y_true, y_preds)
+    
+    
+    class_names = [label for label in sorted(os.listdir("cropped_objects")) if os.path.isdir(os.path.join("cropped_objects", label))]
+
+    assert len(class_names) == num_classes, "Number of class names must match number of classes"
+    
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    disp.plot(ax=ax, cmap=plt.cm.Blues)
+    plt.xticks(rotation=45, ha='right')  # <-- This ensures x-axis labels don’t overlap
+    plt.tight_layout()                   # <-- Adjusts plot to fit labels
+    plt.title('Confusion Matrix - Deep Learning Model UCLA Dataset')
+    plt.savefig("deep_learning_confusion_matrix_ucla.png", dpi=600, bbox_inches='tight')
+    print("Saved confusion matrix as deep_learning_confusion_matrix_ucla.png")
 
     # Save model
-    torch.save(model.state_dict(), "model2.pth")
+    torch.save(model.state_dict(), "model3.pth")
+    print("Saved model weights to model3.pth")
     
     
 
