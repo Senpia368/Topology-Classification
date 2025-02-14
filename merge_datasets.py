@@ -16,15 +16,17 @@ def sample_dataset(dataset_path, sample_size, labels, output_path, copy=False):
         # Get all files in the label path and shuffle them
         files = os.listdir(label_path)
         random.shuffle(files)
-        if len(files) < sample_size:
-            sample_size = len(files)
+        default_sample_size = sample_size if len(files) > sample_size else len(files)
 
-        sample[label] = [os.path.join(label_path, file) for file in files[:sample_size]]
+        sample[label] = [os.path.join(label_path, file) for file in files[:default_sample_size]]
 
         if copy: 
-            for i in range(sample_size):
+            for i in range(default_sample_size):
                 file = files[i]
                 shutil.copy(os.path.join(label_path, file), os.path.join(label_output_path, file))
+    
+    for key, value in sample.items():
+        print(key, len(value))
         
 
     return sample
@@ -49,17 +51,17 @@ def save_sample(sample, output_path):
             shutil.copy(file, label_output_path)
 
 if __name__ == "__main__":
-    dataset_path = "nuscenes_dataset"
-    sample_size = 500
-    labels = ["Bicycle", "Car", "Motorcycle", "Pedestrian", "Truck", "ScooterRider", "Wheelchair", "Bus"]
-    output_path = "sampled_objects"
-    sample_size = 1000
-    sample1 = sample_dataset(dataset_path, sample_size, labels, output_path, copy=False)
+    # dataset_path = "nuscenes_dataset"
+    # sample_size = 500
+    # labels = ["Bicycle", "Car", "Motorcycle", "Pedestrian", "Truck", "ScooterRider", "Wheelchair", "Bus"]
+    output_path = "sampled_objects2"
+    sample_size = 1500
+    # sample1 = sample_dataset(dataset_path, sample_size, labels, output_path, copy=False)
     dataset_path = "cropped_objects"
 
-    sample2 = sample_dataset(dataset_path, sample_size, labels, output_path, copy=False)
-    merged_sample = merge_defaultdicts(sample1, sample2)
-    print(merged_sample)
+    labels = [label for label in sorted(os.listdir("cropped_objects")) if os.path.isdir(os.path.join("cropped_objects", label))]
 
+    sample2 = sample_dataset(dataset_path, sample_size, labels, output_path, copy=True)
+    # merged_sample = merge_defaultdicts(sample1, sample2)
+    # print(merged_sample)
 
-    save_sample(merged_sample, "merged_sampled_objects")
