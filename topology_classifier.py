@@ -130,10 +130,13 @@ class TopologyClassifier:
         print("Successfully extracted features")
         return np.array(features)
     
-    def fit(self, point_clouds, labels):
+    def fit(self, data, labels):
         """Train the classifier."""
         # Extract features
+        point_clouds = data[:, -1]
         X = self.extract_features(point_clouds)
+
+        X = np.hstack([data[:, :-1], X])
         
         # Train classifier
         self.classifier.fit(X, labels)
@@ -213,12 +216,13 @@ class PointCloudDataset(Dataset):
 def main():
     # dataset_path = 'merged_sampled_objects'
     dataset_path = 'sampled_objects2'
+    txt_path = 'sampled_objects2_txt'
     objects_ids_dict = {k:v for v, k in enumerate(sorted(os.listdir(dataset_path)))}
-    data = PointCloudDataLoader(dataset_path, objects_ids_dict=objects_ids_dict, use_cache=False).data
-    points = []
+    data = PointCloudDataLoader(dataset_path, txt_path, objects_ids_dict=objects_ids_dict, use_cache=False).data
+    data = []
     labels = []
 
-    for point, label in data:
+    for obj in data:
         if np.any(np.isnan(point)) or np.any(np.isinf(point)):
             print("Warning: Found NaN or Inf in the processed point cloud. Clipping or skipping.")
             # Option 1: clip them
@@ -226,113 +230,116 @@ def main():
             
             # Option 2: skip the cloud entirely, return empty or None
             # return None
-        points.append(point)
+        length, width, height, point, label = obj
+        data.append([length, width, height, point])
         labels.append(label)
     
-   
+    
+    data = np.array(data)
+    labels = np.array(labels)
 
     X_train, X_test, y_train, y_test = train_test_split(
-        points, labels, test_size=0.2, random_state=42
+        data, labels, test_size=0.2, random_state=42
     )
 
     num_classes = len(np.unique(labels))
     # Train classical classifier
-    # classifier = TopologyClassifier()
-    # classifier = TopologyClassifier(processor=PointCloudProcessor(num_points=256), n_jobs=-1)
-    # print("Training classifier...")
-    # classifier.fit(X_train, y_train)
+    classifier = TopologyClassifier()
+    classifier = TopologyClassifier(processor=PointCloudProcessor(num_points=100), n_jobs=-1)
+    print("Training classifier...")
+    classifier.fit(X_train, y_train)
     
-    # # Predict
-    # print("Predicting...")
-    # predictions = classifier.predict(X_test)
-    # y_hat = np.array(predictions)
-    # accuracy = accuracy_score(y_test, y_hat)
-    # cm = confusion_matrix(y_test, y_hat)
-    # disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Pedestrian', 'Car', 'Bicycle', 'Truck', 'Motorcycle', 'Wheelchair', 'ScooterRider', 'Bus'])
+    # Predict
+    print("Predicting...")
+    predictions = classifier.predict(X_test)
+    y_hat = np.array(predictions)
+    accuracy = accuracy_score(y_test, y_hat)
+    cm = confusion_matrix(y_test, y_hat)
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Pedestrian', 'Car', 'Bicycle', 'Truck', 'Motorcycle', 'Wheelchair', 'ScooterRider', 'Bus'])
 
-    # disp.plot()  # This plots the confusion matrix
+    disp.plot()  # This plots the confusion matrix
 
-    # # Save the figure
-    # plt.savefig("my_confusion_matrix.png", dpi=600, bbox_inches='tight')
+    # Save the figure
+    plt.savefig("my_confusion_matrix.png", dpi=600, bbox_inches='tight')
 
-    # # Optionally close the figure if you don't want it displayed:
-    # plt.close()
-    # print(f"Accuracy: {accuracy}")
+    # Optionally close the figure if you don't want it displayed:
+    plt.close()
+    print(f"Accuracy: {accuracy}")
 
     # Train deep learning model
-    # Create datasets
-    train_dataset = PointCloudDataset(X_train, y_train, processor=PointCloudProcessor(num_points=100))
-    test_dataset = PointCloudDataset(X_test, y_test, processor=PointCloudProcessor(num_points=100))
-    print("Successfully created datasets")
+    # # Create datasets
+    # train_dataset = PointCloudDataset(X_train, y_train, processor=PointCloudProcessor(num_points=100))
+    # test_dataset = PointCloudDataset(X_test, y_test, processor=PointCloudProcessor(num_points=100))
+    # print("Successfully created datasets")
     
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=32)
-    print("Successfully created data loaders")
+    # # Create data loaders
+    # train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    # test_loader = DataLoader(test_dataset, batch_size=32)
+    # print("Successfully created data loaders")
     
-    # Initialize model
-    input_dim = train_dataset.features.shape[1]
-    model = TopologyNet(input_dim=input_dim, num_classes=num_classes).to("cuda:0")
-    # model.load_state_dict(torch.load("model2.pth"))
-    print("Successfully initialized model")
+    # # Initialize model
+    # input_dim = train_dataset.features.shape[1]
+    # model = TopologyNet(input_dim=input_dim, num_classes=num_classes).to("cuda:0")
+    # # model.load_state_dict(torch.load("model2.pth"))
+    # print("Successfully initialized model")
     
-    # Training loop (simplified)
-    criterion = nn.CrossEntropyLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+    # # Training loop (simplified)
+    # criterion = nn.CrossEntropyLoss()
+    # optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
     
-    num_epochs = 250
-    for epoch in range(num_epochs):
-        model.train()
-        epoch_loss = 0
-        for batch, (features, labels) in enumerate(train_loader):
-            optimizer.zero_grad()
-            outputs = model(features)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            epoch_loss += loss.item()
-        print(f"Epoch {epoch+1}, loss: {epoch_loss / len(train_loader)}")
+    # num_epochs = 250
+    # for epoch in range(num_epochs):
+    #     model.train()
+    #     epoch_loss = 0
+    #     for batch, (features, labels) in enumerate(train_loader):
+    #         optimizer.zero_grad()
+    #         outputs = model(features)
+    #         loss = criterion(outputs, labels)
+    #         loss.backward()
+    #         optimizer.step()
+    #         epoch_loss += loss.item()
+    #     print(f"Epoch {epoch+1}, loss: {epoch_loss / len(train_loader)}")
 
-    # Evaluation
-    model.eval()
-    y_preds = []
-    y_true = []
+    # # Evaluation
+    # model.eval()
+    # y_preds = []
+    # y_true = []
 
-    with torch.no_grad():
-        for features, lbls in test_loader:
-            features = features.to("cuda:0")
-            lbls = lbls.to("cuda:0")
-            outputs = model(features)
-            _, predicted = torch.max(outputs, 1)
+    # with torch.no_grad():
+    #     for features, lbls in test_loader:
+    #         features = features.to("cuda:0")
+    #         lbls = lbls.to("cuda:0")
+    #         outputs = model(features)
+    #         _, predicted = torch.max(outputs, 1)
             
-            y_preds.extend(predicted.cpu().numpy())
-            y_true.extend(lbls.cpu().numpy())
+    #         y_preds.extend(predicted.cpu().numpy())
+    #         y_true.extend(lbls.cpu().numpy())
 
-    # Calculate accuracy
-    accuracy = accuracy_score(y_true, y_preds)
-    print(f"Accuracy: {accuracy:.4f}")
+    # # Calculate accuracy
+    # accuracy = accuracy_score(y_true, y_preds)
+    # print(f"Accuracy: {accuracy:.4f}")
 
-    # Confusion matrix
-    cm = confusion_matrix(y_true, y_preds)
+    # # Confusion matrix
+    # cm = confusion_matrix(y_true, y_preds)
     
     
-    class_names = [label for label in sorted(os.listdir("cropped_objects")) if os.path.isdir(os.path.join("cropped_objects", label))]
+    # class_names = [label for label in sorted(os.listdir("cropped_objects")) if os.path.isdir(os.path.join("cropped_objects", label))]
 
-    assert len(class_names) == num_classes, "Number of class names must match number of classes"
+    # assert len(class_names) == num_classes, "Number of class names must match number of classes"
     
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
-    fig, ax = plt.subplots(figsize=(8, 6))
+    # disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
+    # fig, ax = plt.subplots(figsize=(8, 6))
 
-    disp.plot(ax=ax, cmap=plt.cm.Blues)
-    plt.xticks(rotation=45, ha='right')  # <-- This ensures x-axis labels don’t overlap
-    plt.tight_layout()                   # <-- Adjusts plot to fit labels
-    plt.title('Confusion Matrix - Deep Learning Model UCLA Dataset')
-    plt.savefig("deep_learning_confusion_matrix_ucla.png", dpi=600, bbox_inches='tight')
-    print("Saved confusion matrix as deep_learning_confusion_matrix_ucla.png")
+    # disp.plot(ax=ax, cmap=plt.cm.Blues)
+    # plt.xticks(rotation=45, ha='right')  # <-- This ensures x-axis labels don’t overlap
+    # plt.tight_layout()                   # <-- Adjusts plot to fit labels
+    # plt.title('Confusion Matrix - Deep Learning Model UCLA Dataset')
+    # plt.savefig("deep_learning_confusion_matrix_ucla.png", dpi=600, bbox_inches='tight')
+    # print("Saved confusion matrix as deep_learning_confusion_matrix_ucla.png")
 
-    # Save model
-    torch.save(model.state_dict(), "model3.pth")
-    print("Saved model weights to model3.pth")
+    # # Save model
+    # torch.save(model.state_dict(), "model3.pth")
+    # print("Saved model weights to model3.pth")
     
     
 
