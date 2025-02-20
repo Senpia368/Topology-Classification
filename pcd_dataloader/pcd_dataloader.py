@@ -13,6 +13,7 @@ class PointCloudDataLoader(Dataset):
     def __init__(
         self,
         dataset_path: str,
+        txt_path: str,
         cache_path: str = "pointcloud_cache.pkl",
         use_cache: bool = True,
         transform=None,
@@ -32,7 +33,7 @@ class PointCloudDataLoader(Dataset):
             'ScooterRider': 6,
             'Bus': 7
         }
-        self.data = []  # List to store (point_cloud, label) tuples
+        self.data = []  # List to store [length, width, height, point_cloud, label] 
 
         if self.use_cache and os.path.exists(self.cache_path):
             self.load_from_cache()
@@ -43,13 +44,14 @@ class PointCloudDataLoader(Dataset):
     def load_dataset(self):
         logging.info("Loading dataset from disk...")
         for label_name, label_id in self.objects_ids_dict.items():
-            label_path = os.path.join(self.dataset_path, label_name)
-            if not os.path.isdir(label_path):
-                logging.warning(f"Directory for label '{label_name}' not found at path: {label_path}. Skipping.")
+            pcd_label_path = os.path.join(self.dataset_path, label_name)
+            if not os.path.isdir(pcd_label_path):
+                logging.warning(f"Directory for label '{label_name}' not found at path: {pcd_label_path}. Skipping.")
                 continue
 
-            for file in os.listdir(label_path):
-                file_path = os.path.join(label_path, file)
+            for file in os.listdir(pcd_label_path):
+                file_path = os.path.join(pcd_label_path, file)
+                txt_path = os.path.join(self.txt_path, label_name, file.replace('.pcd', '.txt'))
                 if not os.path.isfile(file_path):
                     logging.warning(f"File {file_path} is not a valid file. Skipping.")
                     continue
@@ -62,9 +64,11 @@ class PointCloudDataLoader(Dataset):
 
                     # Convert Open3D PointCloud to NumPy array
                     points = np.asarray(point_cloud.points)
-                    self.data.append((points, label_id))
+                    with open(txt_path, 'r') as f:
+                        length, width, height = map(float, f.readline().split())
+                    self.data.append([length,width,height, points, label_id])
                 except Exception as e:
-                    logging.error(f"Error reading point cloud from {file_path}: {e}. Skipping.")
+                    logging.error(f"Error reading point cloud from {file_path} or txt from{txt_path}: {e}. Skipping.")
 
         logging.info(f"Loaded {len(self.data)} point clouds from disk.")
 
@@ -93,9 +97,9 @@ class PointCloudDataLoader(Dataset):
         if idx < 0 or idx >= len(self.data):
             raise IndexError(f"Index {idx} is out of bounds for dataset of size {len(self.data)}.")
 
-        point_cloud, label = self.data[idx]
+        length, width, height, point_cloud, label = self.data[idx]
 
         if self.transform:
             point_cloud = self.transform(point_cloud)
 
-        return point_cloud, label
+        return length, width, height, point_cloud, label
