@@ -16,4 +16,6 @@ def plot_confusion_matrix(y_true, y_pred, labels, class_names, title="Confusion 
         plt.show()
     if save:
         plt.savefig(save_path or "confusion_matrix.png", dpi=600, bbox_inches='tight')
+    
+    plt.close()
     print(f"Saved confusion matrix as {save_path or 'confusion_matrix.png'}")
