@@ -13,13 +13,14 @@ class PointCloudDataLoader(Dataset):
     def __init__(
         self,
         dataset_path: str,
-        txt_path: str,
+        txt_dir: str,
         cache_path: str = "pointcloud_cache.pkl",
         use_cache: bool = True,
         transform=None,
         objects_ids_dict: dict = None
     ):
         self.dataset_path = dataset_path
+        self.txt_dir = txt_dir
         self.cache_path = cache_path
         self.use_cache = use_cache
         self.transform = transform
@@ -51,9 +52,9 @@ class PointCloudDataLoader(Dataset):
 
             for file in os.listdir(pcd_label_path):
                 file_path = os.path.join(pcd_label_path, file)
-                txt_path = os.path.join(self.txt_path, label_name, file.replace('.pcd', '.txt'))
-                if not os.path.isfile(file_path):
-                    logging.warning(f"File {file_path} is not a valid file. Skipping.")
+                txt_path = os.path.join(self.txt_dir, label_name, file.replace('.pcd', '.txt'))
+                if not os.path.isfile(file_path) or not os.path.isfile(txt_path):
+                    logging.warning(f"File {file_path} or {txt_path} is not a valid file. Skipping.")
                     continue
 
                 try:
