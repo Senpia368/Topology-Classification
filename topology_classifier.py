@@ -12,7 +12,9 @@ import os
 from pcd_dataloader import PointCloudDataLoader
 from sklearn.metrics import confusion_matrix, ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
+from utilities import plot_confusion_matrix
 from joblib import Parallel, delayed
+from xgboost import XGBClassifier
 
 class PointCloudProcessor:
     def __init__(self, normalize=True, num_points=None):
@@ -22,11 +24,6 @@ class PointCloudProcessor:
     
     def process(self, point_cloud):
         """Process a single point cloud."""
-        # Convert to numpy if needed
-        # if not isinstance(point_cloud, np.ndarray):
-        #     points = np.asarray(point_cloud, dtype=np.float32)
-        # else:
-        #     points = point_cloud
         points = np.asarray(point_cloud, dtype=np.float32)
         
         
@@ -43,15 +40,6 @@ class PointCloudProcessor:
         if self.num_points and len(points) > self.num_points:
             indices = np.random.choice(len(points), self.num_points, replace=False)
             points = points[indices]
-
-        # Optionally check for NaN or Inf:
-        if np.any(np.isnan(points)) or np.any(np.isinf(points)):
-            print("Warning: Found NaN or Inf in the processed point cloud. Clipping or skipping.")
-            # Option 1: clip them
-            points = np.nan_to_num(points, nan=0.0, posinf=1e6, neginf=-1e6)
-            
-            # Option 2: skip the cloud entirely, return empty or None
-            # return None
 
         return points
 
@@ -98,10 +86,10 @@ class PersistentHomologyFeatures:
         return np.array(features)
 
 class TopologyClassifier:
-    def __init__(self, processor=None, feature_extractor=None, n_jobs=-1):
+    def __init__(self, processor=None, feature_extractor=None, classifier = None, n_jobs=-1):
         self.processor = processor or PointCloudProcessor()
         self.feature_extractor = feature_extractor or PersistentHomologyFeatures()
-        self.classifier = RandomForestClassifier(n_estimators=200, criterion='entropy')
+        self.classifier = classifier or RandomForestClassifier(n_estimators=200, criterion='entropy')
         self.n_jobs = n_jobs
 
     def _process_single_point_cloud(self, pc):
@@ -119,32 +107,38 @@ class TopologyClassifier:
     def extract_features(self, point_clouds):
         """Extract features from a list of point clouds using parallel processing."""
         # Parallelize over the list of point clouds
-        with Parallel(n_jobs=self.n_jobs) as parallel:
+        with Parallel(n_jobs=self.n_jobs, backend='loky', prefer='threads') as parallel:
         # Perform your parallel calls
             features = parallel(
                 delayed(self._process_single_point_cloud)(pc)
                 for pc in point_clouds
             )
             parallel._terminate_and_reset()
-        
+        del point_clouds
         print("Successfully extracted features")
         return np.array(features)
     
     def fit(self, data, labels):
         """Train the classifier."""
-        # Extract features
+        # Extract point clouds and features
         point_clouds = data[:, -1]
         X = self.extract_features(point_clouds)
 
+        # Join bbox dimensions and features
         X = np.hstack([data[:, :-1], X])
         
         # Train classifier
         self.classifier.fit(X, labels)
     
-    def predict(self, point_clouds):
+    def predict(self, data):
         """Predict labels for point clouds."""
-        # Extract features
+        # Extract point clouds and features
+        point_clouds = data[:, -1]
+        
         X = self.extract_features(point_clouds)
+
+        # Join bbox dimensions and features
+        X = np.hstack([data[:, :-1], X])
         
         # Predict
         return self.classifier.predict(X)
@@ -168,15 +162,26 @@ class TopologyNet(nn.Module):
         return self.network(x)
 
 class PointCloudDataset(Dataset):
-    def __init__(self, point_clouds, labels, processor=None, feature_extractor=None, n_jobs=-1):
+    def __init__(self, data, labels, processor=None, feature_extractor=None, n_jobs=-1):
         self.processor = processor or PointCloudProcessor()
         self.feature_extractor = feature_extractor or PersistentHomologyFeatures()
         self.n_jobs = n_jobs
         
+        # Process point clouds
+        point_clouds = data[:, -1]
+        X = torch.FloatTensor(self.extract_features(point_clouds)).to("cuda:0")
+        
+        # Ensure numerical conversion
+        numerical_features = np.array(data[:, :-1], dtype=np.float32)  # Convert to float
+        numerical_features = torch.FloatTensor(numerical_features).to("cuda:0")  # Convert to tensor
+
+        self.features = torch.cat([numerical_features, X], dim=1)
+
         # Pre-compute features
-        self.features = self.extract_features(point_clouds)
+        # self.features = np.hstack([data[:, :-1], X])
             
-        self.features = torch.FloatTensor(self.features).to("cuda:0")
+        # self.features = torch.FloatTensor(self.features).to("cuda:0")
+        
         self.labels = torch.LongTensor(labels).to("cuda:0")
     
     def _process_single_point_cloud(self, pc):
@@ -201,7 +206,7 @@ class PointCloudDataset(Dataset):
                 for pc in point_clouds
             )
             parallel._terminate_and_reset()
-        
+        del point_clouds
         print("Successfully extracted features")
         return np.array(features)
     
@@ -214,29 +219,28 @@ class PointCloudDataset(Dataset):
 
 # Example usage
 def main():
-    # dataset_path = 'merged_sampled_objects'
-    dataset_path = 'sampled_objects2'
-    txt_path = 'sampled_objects2_txt'
-    objects_ids_dict = {k:v for v, k in enumerate(sorted(os.listdir(dataset_path)))}
-    data = PointCloudDataLoader(dataset_path, txt_path, objects_ids_dict=objects_ids_dict, use_cache=False).data
+    dataset_dir = 'sampled_objects3'
+    txt_path = 'sampled_objects3_txt'
+
+    objects_ids_dict = {k:v for v, k in enumerate(sorted(os.listdir(dataset_dir)))}
+
+    # Load data
+    objs = PointCloudDataLoader(dataset_dir, txt_path, objects_ids_dict=objects_ids_dict, use_cache=True).data
+    print(f"Loaded {len(objs)} objects")
     data = []
     labels = []
 
-    for obj in data:
-        if np.any(np.isnan(point)) or np.any(np.isinf(point)):
-            print("Warning: Found NaN or Inf in the processed point cloud. Clipping or skipping.")
-            # Option 1: clip them
-            point = np.nan_to_num(point, nan=0.0, posinf=1e6, neginf=-1e6)
-            
-            # Option 2: skip the cloud entirely, return empty or None
-            # return None
+
+    for obj in objs:
         length, width, height, point, label = obj
+
         data.append([length, width, height, point])
         labels.append(label)
     
     
-    data = np.array(data)
+    data = np.array(data, dtype=object)
     labels = np.array(labels)
+
 
     X_train, X_test, y_train, y_test = train_test_split(
         data, labels, test_size=0.2, random_state=42
@@ -244,8 +248,11 @@ def main():
 
     num_classes = len(np.unique(labels))
     # Train classical classifier
-    classifier = TopologyClassifier()
-    classifier = TopologyClassifier(processor=PointCloudProcessor(num_points=100), n_jobs=-1)
+    # Random Forest
+    # classifier = TopologyClassifier(processor=PointCloudProcessor(num_points=100), n_jobs=-1)
+    # XGBoost
+    classifier = TopologyClassifier(processor=PointCloudProcessor(num_points=100), classifier = XGBClassifier(n_estimators=200), n_jobs=-1)
+
     print("Training classifier...")
     classifier.fit(X_train, y_train)
     
@@ -254,20 +261,15 @@ def main():
     predictions = classifier.predict(X_test)
     y_hat = np.array(predictions)
     accuracy = accuracy_score(y_test, y_hat)
-    cm = confusion_matrix(y_test, y_hat)
-    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=['Pedestrian', 'Car', 'Bicycle', 'Truck', 'Motorcycle', 'Wheelchair', 'ScooterRider', 'Bus'])
 
-    disp.plot()  # This plots the confusion matrix
-
-    # Save the figure
-    plt.savefig("my_confusion_matrix.png", dpi=600, bbox_inches='tight')
-
-    # Optionally close the figure if you don't want it displayed:
-    plt.close()
     print(f"Accuracy: {accuracy}")
 
+    class_names = [label for label in sorted(os.listdir(dataset_dir)) if os.path.isdir(os.path.join(dataset_dir, label))]
+
+    plot_confusion_matrix(y_test, y_hat, labels, class_names, title="Confusion Matrix - XGBoost", show=False, save=True, save_path="bbox_XGboost3.png")
+
     # Train deep learning model
-    # # Create datasets
+    # Create datasets
     # train_dataset = PointCloudDataset(X_train, y_train, processor=PointCloudProcessor(num_points=100))
     # test_dataset = PointCloudDataset(X_test, y_test, processor=PointCloudProcessor(num_points=100))
     # print("Successfully created datasets")
@@ -325,21 +327,10 @@ def main():
     
     # class_names = [label for label in sorted(os.listdir("cropped_objects")) if os.path.isdir(os.path.join("cropped_objects", label))]
 
-    # assert len(class_names) == num_classes, "Number of class names must match number of classes"
-    
-    # disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=class_names)
-    # fig, ax = plt.subplots(figsize=(8, 6))
-
-    # disp.plot(ax=ax, cmap=plt.cm.Blues)
-    # plt.xticks(rotation=45, ha='right')  # <-- This ensures x-axis labels don’t overlap
-    # plt.tight_layout()                   # <-- Adjusts plot to fit labels
-    # plt.title('Confusion Matrix - Deep Learning Model UCLA Dataset')
-    # plt.savefig("deep_learning_confusion_matrix_ucla.png", dpi=600, bbox_inches='tight')
-    # print("Saved confusion matrix as deep_learning_confusion_matrix_ucla.png")
-
+#    plot_confusion_matrix(y_test, y_hat, labels, class_names, title="Confusion Matrix - NN", show=False, save=True, save_path="bbox_XGboost3.png")
     # # Save model
-    # torch.save(model.state_dict(), "model3.pth")
-    # print("Saved model weights to model3.pth")
+    # torch.save(model.state_dict(), "model5.pth")
+    # print("Saved model weights to model5.pth")
     
     
 
